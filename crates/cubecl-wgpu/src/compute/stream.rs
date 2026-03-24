@@ -293,10 +293,12 @@ impl WgpuStream {
                 };
 
                 match result {
-                    Ok(_) => timing.stop_profile(buffer, poll),
+                    Ok(_) => timing.stop_profile(buffer, poll, self.device.clone()),
                     Err(err) => {
                         // Just to clean the timing buffer.
-                        let _ = timing.stop_profile(buffer, poll).ok();
+                        let _ = timing
+                            .stop_profile(buffer, poll, self.device.clone())
+                            .ok();
                         Err(ProfileError::Server(Box::new(err)))
                     }
                 }
