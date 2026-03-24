@@ -237,14 +237,27 @@ impl Item {
             }
         };
 
+        let align_vec = |b: &mut SpirvCompiler<T>, obj: Word, out_id: Option<Word>| -> Word {
+            match (self, other) {
+                (Item::Scalar(_), Item::Vector(_, _)) => self.broadcast(b, obj, out_id, other),
+                // Align vector -> scalar casts explicitly; passing the vector through
+                // generates invalid SPIR-V when the scalar is later stored.
+                (Item::Vector(elem, _), Item::Scalar(_)) => {
+                    let scalar_ty = Item::Scalar(*elem).id(b);
+                    b.composite_extract(scalar_ty, out_id, obj, vec![0]).unwrap()
+                }
+                _ => obj,
+            }
+        };
+
         match (matching_vec, matching_elem) {
             (true, true) if out_id.is_some() => b.copy_object(ty, out_id, obj).unwrap(),
             (true, true) => obj,
             (true, false) => cast_elem(b, obj, out_id),
-            (false, true) => self.broadcast(b, obj, out_id, other),
+            (false, true) => align_vec(b, obj, out_id),
             (false, false) => {
-                let broadcast = self.broadcast(b, obj, None, other);
-                cast_elem(b, broadcast, out_id)
+                let aligned = align_vec(b, obj, None);
+                cast_elem(b, aligned, out_id)
             }
         }
     }
