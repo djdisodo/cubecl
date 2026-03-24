@@ -231,6 +231,7 @@ impl QueryProfiler {
         &self,
         map_buffer: Option<wgpu::Buffer>,
         poll_signal: Arc<()>,
+        device: wgpu::Device,
     ) -> Result<ProfileDuration, ProfileError> {
         if let Some(map_buffer) = map_buffer {
             let period = self.queue_period;
@@ -239,6 +240,7 @@ impl QueryProfiler {
 
             Ok(ProfileDuration::new_device_time(async move {
                 let (sender, rec) = async_channel::bounded(1);
+                let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
                 map_buffer
                     .slice(..)
                     .map_async(wgpu::MapMode::Read, move |v| {
@@ -246,15 +248,27 @@ impl QueryProfiler {
                         // This is fine, just means results aren't needed anymore.
                         let _ = sender.try_send(v);
                     });
-                rec.recv()
-                    .await
-                    .expect("Unable to receive buffer slice result.")
-                    .expect("Failed to map buffer");
+                let map_error_future = error_scope.pop();
+                let map_result = rec.recv().await.ok().and_then(Result::ok);
+                let map_error = map_error_future.await;
                 // Can stop polling now.
                 core::mem::drop(poll_signal);
 
+                if map_result.is_none() || map_error.is_some() {
+                    // Gracefully degrade profiling when readback fails; autotune can continue
+                    // without poisoning the execution stream with panics.
+                    return ProfileTicks::from_start_end(epoch_instant, epoch_instant);
+                }
+
                 let binding = map_buffer.slice(..).get_mapped_range();
-                let data: &[u64] = bytemuck::try_cast_slice(&binding).unwrap();
+                let data: &[u64] = match bytemuck::try_cast_slice(&binding) {
+                    Ok(data) if data.len() >= 2 => data,
+                    _ => {
+                        drop(binding);
+                        map_buffer.unmap();
+                        return ProfileTicks::from_start_end(epoch_instant, epoch_instant);
+                    }
+                };
 
                 // Get nr. of ticks since epoch.
                 let data_start = data[0].saturating_sub(epoch_tick);
