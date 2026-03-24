@@ -195,7 +195,8 @@ impl WgpuServer {
         // }
         let repr = compiled.repr.as_ref().map(|it| it.as_ref());
         let module = self.create_module(&compiled.entrypoint_name, repr, &compiled.source, mode)?;
-        let pipeline = self.create_pipeline(&compiled.entrypoint_name, repr, module, bindings);
+        let pipeline =
+            self.create_pipeline(&compiled.entrypoint_name, repr, module, bindings)?;
         self.pipelines.insert(kernel_id.clone(), pipeline.clone());
 
         #[cfg(feature = "spirv")]
