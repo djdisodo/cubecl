@@ -47,7 +47,7 @@ impl WgpuServer {
                 let repr = AutoRepresentationRef::SpirV(&entry.kernel);
                 let module = self.create_module(&entry.entrypoint_name, Some(repr), "", mode)?;
                 let pipeline =
-                    self.create_pipeline(&entry.entrypoint_name, Some(repr), module, bindings);
+                    self.create_pipeline(&entry.entrypoint_name, Some(repr), module, bindings)?;
                 Ok(Some(Ok(pipeline)))
             } else {
                 Ok(Some(Err(key)))
@@ -73,17 +73,39 @@ impl WgpuServer {
         match repr {
             #[cfg(feature = "spirv")]
             Some(AutoRepresentationRef::SpirV(repr)) => unsafe {
-                Ok(self.device.create_shader_module_passthrough(
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    error_scope = Some(self.device.push_error_scope(wgpu::ErrorFilter::Validation));
+                }
+
+                let module = self.device.create_shader_module_passthrough(
                     wgpu::ShaderModuleDescriptorPassthrough {
                         label: Some(entrypoint_name),
                         spirv: Some(Cow::Borrowed(&repr.assembled_module)),
                         ..Default::default()
                     },
-                ))
+                );
+
+                #[cfg(not(target_family = "wasm"))]
+                if let Some(scope) = error_scope.take()
+                    && let Some(err) = cubecl_common::future::block_on(scope.pop())
+                {
+                    return Err(CompilationError::Generic {
+                        reason: format!("{err}"),
+                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                    });
+                }
+
+                Ok(module)
             },
             #[cfg(all(feature = "msl", target_os = "macos"))]
             Some(AutoRepresentationRef::Msl(repr)) => unsafe {
-                Ok(self.device.create_shader_module_passthrough(
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    error_scope = Some(self.device.push_error_scope(wgpu::ErrorFilter::Validation));
+                }
+
+                let module = self.device.create_shader_module_passthrough(
                     wgpu::ShaderModuleDescriptorPassthrough {
                         entry_point: entrypoint_name.to_string(),
                         label: Some(entrypoint_name),
@@ -91,7 +113,19 @@ impl WgpuServer {
                         num_workgroups: (repr.cube_dim.x, repr.cube_dim.y, repr.cube_dim.z),
                         ..Default::default()
                     },
-                ))
+                );
+
+                #[cfg(not(target_family = "wasm"))]
+                if let Some(scope) = error_scope.take()
+                    && let Some(err) = cubecl_common::future::block_on(scope.pop())
+                {
+                    return Err(CompilationError::Generic {
+                        reason: format!("{err}"),
+                        backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                    });
+                }
+
+                Ok(module)
             },
             _ => {
                 let _ = entrypoint_name; // otherwise unused
@@ -144,7 +178,10 @@ impl WgpuServer {
         repr: Option<AutoRepresentationRef<'_>>,
         module: ShaderModule,
         bindings: &KernelArguments,
-    ) -> Arc<ComputePipeline> {
+    ) -> Result<Arc<ComputePipeline>, CompilationError> {
+        #[cfg(not(target_family = "wasm"))]
+        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+
         let bindings_info = match repr {
             Some(AutoRepresentationRef::Wgsl(repr)) => Some(wgsl::bindings(repr)),
             #[cfg(all(feature = "msl", target_os = "macos"))]
@@ -209,7 +246,25 @@ impl WgpuServer {
                 },
                 cache: None,
             });
-        Arc::new(pipeline)
+        let pipeline = Arc::new(pipeline);
+
+        #[cfg(not(target_family = "wasm"))]
+        {
+            // Trigger pipeline validation while the scope is still active so invalid pipelines
+            // are surfaced as a compilation error (instead of failing later during scheduling).
+            if layout.is_some() {
+                let _ = pipeline.get_bind_group_layout(0);
+            }
+
+            if let Some(err) = cubecl_common::future::block_on(error_scope.pop()) {
+                return Err(CompilationError::Generic {
+                    reason: format!("{err}"),
+                    backtrace: cubecl_common::backtrace::BackTrace::capture(),
+                });
+            }
+        }
+
+        Ok(pipeline)
     }
 }
 
