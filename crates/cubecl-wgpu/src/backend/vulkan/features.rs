@@ -85,12 +85,10 @@ impl<'a> ExtendedFeatures<'a> {
     }
 
     pub fn add_to_device_create(&'a mut self, info: DeviceCreateInfo<'a>) -> DeviceCreateInfo<'a> {
-        let mut info = info
-            .push(&mut self.mem_model)
-            .push(&mut self.float16_int8)
-            .push(&mut self.buf_16)
-            .push(&mut self.buf_8)
-            .push(&mut self.subgroup_extended);
+        // Core feature structs (e.g. float16/int8, 8/16-bit storage, memory model) are already
+        // provided by wgpu's physical_device_features chain; pushing them again here creates
+        // duplicate sType entries in VkDeviceCreateInfo::pNext.
+        let mut info = info;
 
         fn push_opt<'a, T: Extends<DeviceCreateInfo<'a>> + TaggedStructure<'a>>(
             mut info: DeviceCreateInfo<'a>,
