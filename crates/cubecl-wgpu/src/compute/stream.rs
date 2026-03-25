@@ -166,6 +166,7 @@ impl WgpuStream {
 
         for (staging, _binding, _size) in staging_info.iter() {
             let (sender, receiver) = async_channel::bounded(1);
+            let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
             staging
                 .buffer
                 .slice(..)
@@ -175,18 +176,29 @@ impl WgpuStream {
                     let _ = sender.try_send(v);
                 });
 
-            callbacks.push(receiver);
+            callbacks.push((receiver, error_scope));
         }
 
         let poll = self.poll.start_polling();
 
         Box::pin(async move {
-            for callback in callbacks {
-                callback
-                    .recv()
-                    .await
-                    .expect("Unable to receive buffer slice result.")
-                    .expect("Failed to map buffer");
+            for (callback, error_scope) in callbacks {
+                let recv_result = callback.recv().await.map_err(|_| ServerError::Generic {
+                    reason: "Unable to receive buffer slice result.".to_string(),
+                    backtrace: BackTrace::capture(),
+                })?;
+                if let Err(err) = recv_result {
+                    return Err(ServerError::Generic {
+                        reason: format!("Failed to map buffer: {err}"),
+                        backtrace: BackTrace::capture(),
+                    });
+                }
+                if let Some(err) = error_scope.pop().await {
+                    return Err(ServerError::Generic {
+                        reason: format!("Failed to map buffer: {err}"),
+                        backtrace: BackTrace::capture(),
+                    });
+                }
             }
 
             // Can stop polling now.
