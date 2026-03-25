@@ -175,14 +175,15 @@ impl WgpuStream {
                     // This is fine, just means results aren't needed anymore.
                     let _ = sender.try_send(v);
                 });
+            let map_error_future = error_scope.pop();
 
-            callbacks.push((receiver, error_scope));
+            callbacks.push((receiver, map_error_future));
         }
 
         let poll = self.poll.start_polling();
 
         Box::pin(async move {
-            for (callback, error_scope) in callbacks {
+            for (callback, map_error_future) in callbacks {
                 let recv_result = callback.recv().await.map_err(|_| ServerError::Generic {
                     reason: "Unable to receive buffer slice result.".to_string(),
                     backtrace: BackTrace::capture(),
@@ -193,7 +194,7 @@ impl WgpuStream {
                         backtrace: BackTrace::capture(),
                     });
                 }
-                if let Some(err) = error_scope.pop().await {
+                if let Some(err) = map_error_future.await {
                     return Err(ServerError::Generic {
                         reason: format!("Failed to map buffer: {err}"),
                         backtrace: BackTrace::capture(),
