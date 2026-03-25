@@ -71,9 +71,7 @@ fn request_device(
     limits: Limits,
 ) -> (wgpu::Device, wgpu::Queue) {
     let full_feat = features;
-    // This registers only f16 but not u8/i8, so remove so we can manually add them
-    features.remove(Features::SHADER_F16);
-    // Skip float features since we already register a more general version manually
+    // Skip float atomic features since we register a more general version manually.
     features.remove(Features::SHADER_FLOAT32_ATOMIC);
 
     let ash = adapter.shared_instance();
