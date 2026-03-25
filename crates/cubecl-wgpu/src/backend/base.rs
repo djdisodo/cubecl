@@ -160,20 +160,6 @@ impl WgpuServer {
         module: ShaderModule,
         bindings: &KernelArguments,
     ) -> Arc<ComputePipeline> {
-        if std::env::var("CUBECL_DEBUG_PIPELINE_LAYOUT").is_ok() {
-            #[cfg(feature = "spirv")]
-            if let Some(AutoRepresentationRef::SpirV(repr)) = repr {
-                eprintln!(
-                    "[cubecl-wgpu] create_pipeline entrypoint={} repr.bindings={:?} metadata_static_len={} scalars_len={} buffers_len={}",
-                    entrypoint_name,
-                    repr.bindings,
-                    bindings.metadata.static_len,
-                    bindings.scalars.len(),
-                    bindings.buffers.len()
-                );
-            }
-        }
-
         #[cfg(not(target_family = "wasm"))]
         let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
 
