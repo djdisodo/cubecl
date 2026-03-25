@@ -73,21 +73,6 @@ impl WgpuServer {
         match repr {
             #[cfg(feature = "spirv")]
             Some(AutoRepresentationRef::SpirV(repr)) => unsafe {
-                if std::env::var("CUBECL_DUMP_SPIRV").is_ok() && entrypoint_name == "elemwise_fuse" {
-                    static DUMP_ONCE: std::sync::Once = std::sync::Once::new();
-                    DUMP_ONCE.call_once(|| {
-                        let mut bytes = Vec::with_capacity(repr.assembled_module.len() * 4);
-                        for word in repr.assembled_module.iter() {
-                            bytes.extend_from_slice(&word.to_le_bytes());
-                        }
-                        let path = std::path::Path::new("D:/efficientvit/tmp/elemwise_fuse_dump.spv");
-                        if let Some(parent) = path.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        let _ = std::fs::write(path, bytes);
-                    });
-                }
-
                 Ok(self.device.create_shader_module_passthrough(
                     wgpu::ShaderModuleDescriptorPassthrough {
                         label: Some(entrypoint_name),
@@ -160,9 +145,6 @@ impl WgpuServer {
         module: ShaderModule,
         bindings: &KernelArguments,
     ) -> Arc<ComputePipeline> {
-        #[cfg(not(target_family = "wasm"))]
-        let error_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-
         let bindings_info = match repr {
             Some(AutoRepresentationRef::Wgsl(repr)) => Some(wgsl::bindings(repr)),
             #[cfg(all(feature = "msl", target_os = "macos"))]
@@ -227,21 +209,7 @@ impl WgpuServer {
                 },
                 cache: None,
             });
-        let pipeline = Arc::new(pipeline);
-
-        #[cfg(not(target_family = "wasm"))]
-        {
-            // Force immediate validation and surface the actual pipeline creation reason.
-            let _ = pipeline.get_bind_group_layout(0);
-            if let Some(err) = cubecl_common::future::block_on(error_scope.pop()) {
-                panic!(
-                    "cubecl create_pipeline failed for '{}': {err}\n(debug={err:?})",
-                    entrypoint_name
-                );
-            }
-        }
-
-        pipeline
+        Arc::new(pipeline)
     }
 }
 
