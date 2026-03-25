@@ -209,6 +209,13 @@ pub(crate) fn create_server(setup: WgpuSetup, options: RuntimeOptions) -> WgpuSe
         alignment: limits.min_storage_buffer_offset_alignment as u64,
     };
     let max_count = adapter_limits.max_compute_workgroups_per_dimension;
+    let max_bindings_driver = limits.max_storage_buffers_per_shader_stage.saturating_sub(1);
+    // Keep fusion binding count conservative to avoid invalid compute pipelines on drivers
+    // that over-report practical descriptor capacity.
+    let max_bindings = std::env::var("CUBECL_WGPU_MAX_BINDINGS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or_else(|| max_bindings_driver.min(32));
     let hardware_props = HardwareProperties {
         load_width: 128,
         // On Apple Silicon, the plane size is 32,
@@ -225,9 +232,7 @@ pub(crate) fn create_server(setup: WgpuSetup, options: RuntimeOptions) -> WgpuSe
         // wgpu uses an additional buffer for variable-length buffers,
         // so we have to use one buffer less on our side to make room for that wgpu internal buffer.
         // See: https://github.com/gfx-rs/wgpu/blob/a9638c8e3ac09ce4f27ac171f8175671e30365fd/wgpu-hal/src/metal/device.rs#L799
-        max_bindings: limits
-            .max_storage_buffers_per_shader_stage
-            .saturating_sub(1),
+        max_bindings,
         max_shared_memory_size: limits.max_compute_workgroup_storage_size as usize,
         max_cube_count: (max_count, max_count, max_count),
         max_units_per_cube: adapter_limits.max_compute_invocations_per_workgroup,
