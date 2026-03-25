@@ -11,7 +11,7 @@ use crate::{
     },
     storage::{ComputeStorage, ManagedResource},
 };
-use alloc::{format, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, format, sync::Arc, vec, vec::Vec};
 use cubecl_common::{
     backtrace::BackTrace,
     bytes::{AllocationProperty, Bytes},
@@ -99,9 +99,19 @@ impl<R: Runtime> ComputeClient<R> {
 
     fn do_read(&self, descriptors: Vec<CopyDescriptor>) -> DynFut<Result<Vec<Bytes>, ServerError>> {
         let stream_id = self.stream_id();
-        self.device
+        match self
+            .device
             .submit_blocking(move |server| server.read(descriptors, stream_id))
-            .unwrap()
+        {
+            Ok(fut) => fut,
+            Err(_) => {
+                let err = ServerError::Generic {
+                    reason: format!("Failed to submit read task to device worker"),
+                    backtrace: BackTrace::capture(),
+                };
+                Box::pin(async move { Err(err) })
+            }
+        }
     }
 
     /// Given bindings, returns owned resources as bytes.
